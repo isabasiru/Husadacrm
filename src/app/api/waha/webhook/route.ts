@@ -148,10 +148,25 @@ export async function POST(request: Request) {
       // 5. Emit Socket.io events
       const io = global.__socketIO;
       if (io) {
+        const fullContact = await prisma.contact.findUnique({
+          where: { id: contact.id },
+          include: {
+            stage: true,
+            tags: { include: { tag: true } },
+            conversations: {
+              orderBy: { lastMessageAt: 'desc' },
+              take: 1,
+              include: {
+                lastRepliedBy: { select: { fullName: true } }
+              }
+            }
+          }
+        });
+
         io.to(`conversation:${conversation.id}`).emit('new_message', {
           conversationId: conversation.id,
           message: savedMessage,
-          contact,
+          contact: fullContact || contact,
         });
         io.emit('inbox_update', {
           contactId: contact.id,
@@ -160,6 +175,7 @@ export async function POST(request: Request) {
           lastMessageAt: savedMessage.sentAt,
           chatbotHandled,
           isNewContact,
+          contact: fullContact,
         });
       }
 

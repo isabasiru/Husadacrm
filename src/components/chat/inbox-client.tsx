@@ -195,7 +195,14 @@ export function InboxClient({
     if (!socket) return;
 
     // Handles incoming/outgoing message listing updates
-    const handleInboxUpdate = async (data: { contactId: string, lastMessage: string, lastMessageAt: string, senderName?: string, direction?: string }) => {
+    const handleInboxUpdate = async (data: { 
+      contactId: string, 
+      lastMessage: string, 
+      lastMessageAt: string, 
+      senderName?: string, 
+      direction?: string,
+      contact?: ContactWithRelations
+    }) => {
       // Play incoming sound for INBOUND messages
       if (!data.senderName && data.direction !== 'OUTBOUND') {
         const existingContact = contacts.find(c => c.id === data.contactId);
@@ -204,6 +211,25 @@ export function InboxClient({
         }
       }
 
+      // 1. If full contact data is directly sent in the socket event, update synchronously
+      if (data.contact) {
+        const updatedContact = data.contact;
+        setContacts(prev => {
+          // Prevent older data from overwriting newer state
+          const existing = prev.find(c => c.id === data.contactId);
+          if (existing && new Date(existing.updatedAt).getTime() > new Date(updatedContact.updatedAt).getTime()) {
+            return prev;
+          }
+          const filtered = prev.filter(c => c.id !== data.contactId);
+          if (currentUser.role === 'AGENT' && updatedContact.assignedAgentId !== currentUser.id) {
+            return filtered;
+          }
+          return [updatedContact, ...filtered].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        });
+        return;
+      }
+
+      // 2. Fallback: HTTP fetch with race condition protection
       try {
         const res = await fetch(`/api/contacts/${data.contactId}`);
         if (res.ok) {
@@ -212,12 +238,14 @@ export function InboxClient({
           
           if (updatedContact && updatedContact.id) {
             setContacts(prev => {
+              const existing = prev.find(c => c.id === data.contactId);
+              if (existing && new Date(existing.updatedAt).getTime() > new Date(updatedContact.updatedAt).getTime()) {
+                return prev;
+              }
               const filtered = prev.filter(c => c.id !== data.contactId);
-              // If current user is AGENT and the contact is not assigned to them, remove/ignore
               if (currentUser.role === 'AGENT' && updatedContact.assignedAgentId !== currentUser.id) {
                 return filtered;
               }
-              // Add/update contact and move to the top of list
               return [updatedContact, ...filtered].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
             });
           }

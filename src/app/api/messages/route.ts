@@ -164,11 +164,26 @@ export async function POST(request: Request) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const globalIo = (global as any).__socketIO;
     if (globalIo) {
+      const fullContact = await prisma.contact.findUnique({
+        where: { id: contactId },
+        include: {
+          stage: true,
+          tags: { include: { tag: true } },
+          conversations: {
+            orderBy: { lastMessageAt: 'desc' },
+            take: 1,
+            include: {
+              lastRepliedBy: { select: { fullName: true } }
+            }
+          }
+        }
+      });
+
       // Emit to specific conversation room
       globalIo.to(`conversation:${conversation.id}`).emit('new_message', {
         conversationId: conversation.id,
         message: message,
-        contact: contact
+        contact: fullContact || contact
       });
       // Also emit globally for inbox list updates
       globalIo.emit('inbox_update', {
@@ -176,6 +191,7 @@ export async function POST(request: Request) {
         conversationId: conversation.id,
         lastMessage: message.content,
         lastMessageAt: message.sentAt,
+        contact: fullContact,
       });
     }
 

@@ -153,11 +153,27 @@ export async function POST(request: Request) {
 
       // Update sidebar list for all agents
       if (io && latestMsg) {
+        const fullContact = await prisma.contact.findUnique({
+          where: { id: contact.id },
+          include: {
+            stage: true,
+            tags: { include: { tag: true } },
+            conversations: {
+              orderBy: { lastMessageAt: 'desc' },
+              take: 1,
+              include: {
+                lastRepliedBy: { select: { fullName: true } }
+              }
+            }
+          }
+        });
+
         io.emit('inbox_update', {
           contactId: contact.id,
           conversationId: conversation.id,
           lastMessage: latestMsg.body || '',
           lastMessageAt: latestDate,
+          contact: fullContact,
         });
       }
     }

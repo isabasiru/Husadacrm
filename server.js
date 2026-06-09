@@ -231,10 +231,25 @@ async function runAutoFollowUp() {
 
       // Emit Socket.io events
       if (global.__socketIO) {
+        const fullContact = await prisma.contact.findUnique({
+          where: { id: conv.contact.id },
+          include: {
+            stage: true,
+            tags: { include: { tag: true } },
+            conversations: {
+              orderBy: { lastMessageAt: 'desc' },
+              take: 1,
+              include: {
+                lastRepliedBy: { select: { fullName: true } }
+              }
+            }
+          }
+        });
+
         global.__socketIO.to(`conversation:${conv.id}`).emit('new_message', {
           conversationId: conv.id,
           message: message,
-          contact: conv.contact
+          contact: fullContact || conv.contact
         });
 
         global.__socketIO.emit('inbox_update', {
@@ -242,7 +257,8 @@ async function runAutoFollowUp() {
           conversationId: conv.id,
           lastMessage: message.content,
           lastMessageAt: message.sentAt,
-          senderName: 'System'
+          senderName: 'System',
+          contact: fullContact,
         });
       }
 
