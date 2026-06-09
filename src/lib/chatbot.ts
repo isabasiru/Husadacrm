@@ -1,11 +1,11 @@
 /**
  * AI Chatbot — WhatsApp onboarding flow for new contacts
  * 
- * State machine:
+ * State machine (restructured to ask product interest first):
  *   null / undefined  → Start: greet + ask product interest
- *   "ask_name"        → Waiting for name
- *   "ask_domicile"    → Waiting for domicile
- *   "ask_complaint"   → Waiting for complaint/question
+ *   "ask_product"     → Save product / complaint, ask for name
+ *   "ask_name"        → Save name (filter greetings), ask for domicile
+ *   "ask_domicile"    → Save domicile, mark "done" and thank user
  *   "done"            → Onboarding complete, hand off to agent
  */
 
@@ -16,6 +16,21 @@ import { sendWahaMessage } from '@/lib/waha';
 type ChatbotData = {
   step?: string;
 };
+
+const GREETINGS = [
+  'halo', 'hello', 'hi', 'helo', 'ping', 'p', 'permisi', 'assalamualaikum', 'assalamu\'alaikum',
+  'pagi', 'siang', 'sore', 'malam', 'selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam',
+  'test', 'tes', 'misi', 'kak', 'gan', 'bro', 'sis', 'min', 'admin'
+];
+
+function isGreeting(text: string): boolean {
+  const clean = text.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, '').trim();
+  const words = clean.split(/\s+/);
+  if (words.length <= 2) {
+    return words.every(w => GREETINGS.includes(w));
+  }
+  return false;
+}
 
 /**
  * Fetch active products for chatbot listing
@@ -45,99 +60,31 @@ export async function handleChatbotFlow(
 ): Promise<boolean> {
   const trimmed = incomingText?.trim() || '';
 
-  // ── STEP 0: New contact (no state yet) — start onboarding ──
+  // ── STEP 0: New contact (no state yet) — Greet and ask about product ──
   if (!currentState) {
     const productList = await getActiveProducts();
-    const greeting =
-      `Halo! 👋 Selamat datang di *Husada*.\n\n` +
-      `Kami siap membantu Anda. Boleh kami tahu nama lengkap Anda?`;
-
-    await sendWahaMessage(contactPhone, greeting);
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        chatbotState: 'ask_name',
-        chatbotData: { productList },
-      },
-    });
-    return true;
-  }
-
-const GREETINGS = [
-  'halo', 'hello', 'hi', 'helo', 'ping', 'p', 'permisi', 'assalamualaikum', 'assalamu\'alaikum',
-  'pagi', 'siang', 'sore', 'malam', 'selamat pagi', 'selamat siang', 'selamat sore', 'selamat malam',
-  'test', 'tes', 'misi', 'kak', 'gan', 'bro', 'sis', 'min', 'admin'
-];
-
-function isGreeting(text: string): boolean {
-  const clean = text.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, '').trim();
-  const words = clean.split(/\s+/);
-  if (words.length <= 2) {
-    return words.every(w => GREETINGS.includes(w));
-  }
-  return false;
-}
-
-  // ── STEP 1: Waiting for name ──
-  if (currentState === 'ask_name') {
-    if (trimmed.length < 2 || isGreeting(trimmed)) {
-      await sendWahaMessage(contactPhone, 'Mohon perkenalkan nama lengkap Anda untuk memulai percakapan 🙏');
-      return true;
-    }
-
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        fullName: trimmed,
-        chatbotState: 'ask_domicile',
-      },
-    });
-
-    await sendWahaMessage(
-      contactPhone,
-      `Terima kasih, *${trimmed}*! 😊\n\nBoleh tahu domisili Anda? (Contoh: Jakarta Selatan, Bandung, dll.)`
-    );
-    return true;
-  }
-
-  // ── STEP 2: Waiting for domicile ──
-  if (currentState === 'ask_domicile') {
-    if (trimmed.length < 2) {
-      await sendWahaMessage(contactPhone, 'Mohon masukkan kota/domisili Anda 🙏');
-      return true;
-    }
-
-    // Get existing chatbot data to retrieve product list
-    const contact = await prisma.contact.findUnique({
-      where: { id: contactId },
-      select: { chatbotData: true },
-    });
-    const cbData = (contact?.chatbotData as ChatbotData | null) || {};
-
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        domicile: trimmed,
-        chatbotState: 'ask_complaint',
-        chatbotData: { ...cbData },
-      },
-    });
-
-    const productList = await getActiveProducts();
     const productQuestion = productList
-      ? `Ada pertanyaan atau keluhan tentang layanan apa yang ingin Anda tanyakan?\n\n` +
+      ? `Halo! 👋 Selamat datang di *Husada*.\n\n` +
+        `Sebelum kami hubungkan dengan tim agen, layanan atau produk apa yang sedang Anda minati?\n\n` +
         `Layanan kami:\n${productList}\n\n` +
-        `Silakan ketik pertanyaan atau pilih nomor layanan.`
-      : `Ada pertanyaan atau keluhan apa yang ingin Anda sampaikan? Silakan ceritakan.`;
+        `Silakan ketik nomor layanan atau ceritakan keluhan Anda.`
+      : `Halo! 👋 Selamat datang di *Husada*.\n\n` +
+        `Sebelum kami hubungkan dengan tim agen, ada pertanyaan atau keluhan apa yang ingin Anda sampaikan? Silakan ceritakan.`;
 
     await sendWahaMessage(contactPhone, productQuestion);
+    await prisma.contact.update({
+      where: { id: contactId },
+      data: {
+        chatbotState: 'ask_product',
+      },
+    });
     return true;
   }
 
-  // ── STEP 3: Waiting for complaint/product question ──
-  if (currentState === 'ask_complaint') {
+  // ── STEP 1: Waiting for product choice / complaint ──
+  if (currentState === 'ask_product') {
     if (trimmed.length < 2) {
-      await sendWahaMessage(contactPhone, 'Mohon ceritakan keluhan atau pertanyaan Anda 🙏');
+      await sendWahaMessage(contactPhone, 'Mohon pilih layanan atau ceritakan keluhan Anda terlebih dahulu 🙏');
       return true;
     }
 
@@ -160,9 +107,53 @@ function isGreeting(text: string): boolean {
       data: {
         chiefComplaint: trimmed,
         initialQuestion: trimmed,
+        chatbotState: 'ask_name',
+        ...(interestedProductId ? { interestedProductId } : {}),
+      },
+    });
+
+    await sendWahaMessage(
+      contactPhone,
+      `Terima kasih! Boleh kami tahu siapa nama lengkap Anda? 😊`
+    );
+    return true;
+  }
+
+  // ── STEP 2: Waiting for name ──
+  if (currentState === 'ask_name') {
+    if (trimmed.length < 2 || isGreeting(trimmed)) {
+      await sendWahaMessage(contactPhone, 'Mohon perkenalkan nama lengkap Anda untuk melanjutkan onboarding 🙏');
+      return true;
+    }
+
+    await prisma.contact.update({
+      where: { id: contactId },
+      data: {
+        fullName: trimmed,
+        chatbotState: 'ask_domicile',
+      },
+    });
+
+    await sendWahaMessage(
+      contactPhone,
+      `Terima kasih, *${trimmed}*! 😊\n\nDi kota/kabupaten mana domisili Anda saat ini?`
+    );
+    return true;
+  }
+
+  // ── STEP 3: Waiting for domicile ──
+  if (currentState === 'ask_domicile') {
+    if (trimmed.length < 2) {
+      await sendWahaMessage(contactPhone, 'Mohon masukkan kota/kabupaten domisili Anda 🙏');
+      return true;
+    }
+
+    await prisma.contact.update({
+      where: { id: contactId },
+      data: {
+        domicile: trimmed,
         chatbotState: 'done',
         chatbotData: Prisma.DbNull,
-        ...(interestedProductId ? { interestedProductId } : {}),
       },
     });
 

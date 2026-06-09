@@ -76,10 +76,10 @@ When a `message` event payload is received:
 The webhook handler integrates an automated AI Chatbot onboarding flow for new contacts before they are handed off to human agents.
 
 ### Chatbot States & Flow:
-1. **Initial (State: `null`)**: Sent greeting message and asks for the contact's name. Transitions to `ask_name`.
-2. **Name Collection (State: `ask_name`)**: Receives contact's reply, updates contact's name, asks for their domicile. Transitions to `ask_domicile`.
-3. **Domicile Collection (State: `ask_domicile`)**: Receives contact's reply, updates contact's domicile, list active products, and asks for their chief complaint or product interest. Transitions to `ask_complaint`.
-4. **Complaint Collection (State: `ask_complaint`)**: Receives complaint/question, attempts to map choice to active `Product` ID, sets `chatbotState` to `done`, clears temporary `chatbotData`, sends confirmation, and hands off the conversation to human agents.
+1. **Initial (State: `null`)**: Greets the user, list active products, and asks about their product interest or complaint. Transitions to `ask_product`.
+2. **Product Collection (State: `ask_product`)**: Receives and matches product interest/complaint, then asks for the contact's full name. Transitions to `ask_name`.
+3. **Name Collection (State: `ask_name`)**: Receives contact's reply, updates contact's name (ignoring generic greetings), and asks for their domicile. Transitions to `ask_domicile`.
+4. **Domicile Collection (State: `ask_domicile`)**: Receives contact's reply, updates contact's domicile, sets `chatbotState` to `done`, clears temporary `chatbotData`, sends confirmation, and hands off the conversation to human agents.
 
 ---
 
