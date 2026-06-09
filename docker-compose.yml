@@ -1,0 +1,58 @@
+version: "3.9"
+
+# ============================================
+# Husada CRM Dashboard — husada.webahaus.id
+# ============================================
+
+services:
+  app:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: husada-crm-app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - WAHA_API_URL=${WAHA_API_URL}
+      - WAHA_API_KEY=${WAHA_API_KEY}
+    networks:
+      - webhaus-web
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          memory: 256M
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.husadacrm.rule=Host(`husada.webhaus.id`)"
+      - "traefik.http.routers.husadacrm.entrypoints=websecure"
+      - "traefik.http.routers.husadacrm.tls.certresolver=letsencrypt"
+      - "traefik.http.services.husadacrm.loadbalancer.server.port=3000"
+
+  db:
+    image: postgres:16-alpine
+    container_name: husada-crm-db
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=husadacrm
+    ports:
+      - "5432:5432"
+    volumes:
+      - husada_db_data:/var/lib/postgresql/data
+    networks:
+      - webhaus-web
+
+volumes:
+  husada_db_data:
+
+networks:
+  webhaus-web:
+    external: true
