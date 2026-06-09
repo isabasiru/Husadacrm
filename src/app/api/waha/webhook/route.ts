@@ -123,8 +123,13 @@ export async function POST(request: Request) {
       // 4. 🤖 Chatbot flow — only for INBOUND messages from non-done contacts
       let chatbotHandled = false;
       if (!isFromMe) {
+        const chatbotSetting = await prisma.systemSetting.findUnique({
+          where: { key: 'chatbot_enabled' }
+        });
+        const chatbotEnabled = chatbotSetting ? chatbotSetting.value === 'true' : true;
+
         const currentState = contact.chatbotState;
-        if (currentState !== 'done') {
+        if (chatbotEnabled && currentState !== 'done') {
           chatbotHandled = await handleChatbotFlow(
             contact.id,
             currentState,
