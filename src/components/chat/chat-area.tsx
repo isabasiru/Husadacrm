@@ -1,5 +1,5 @@
 import { Contact, Stage, ContactTag, Tag, Message, MessageTemplate, User } from "@prisma/client";
-import { Send, Paperclip, MoreVertical, Zap } from "lucide-react";
+import { Send, Paperclip, MoreVertical, Zap, RefreshCw } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useSocket } from "@/hooks/use-socket";
 import { format } from "date-fns";
@@ -17,11 +17,15 @@ type MessageWithRelations = Message & {
 export function ChatArea({ 
   contact, 
   currentAgentName = "Agent",
-  onContactUpdated
+  onContactUpdated,
+  onSync,
+  syncing = false
 }: { 
   contact: ContactWithRelations,
   currentAgentName?: string,
-  onContactUpdated?: (contact: Partial<ContactWithRelations>) => void
+  onContactUpdated?: (contact: Partial<ContactWithRelations>) => void,
+  onSync?: () => void,
+  syncing?: boolean
 }) {
   const [messages, setMessages] = useState<MessageWithRelations[]>([]);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -189,7 +193,19 @@ export function ChatArea({
             {contact.fullName ? contact.fullName.charAt(0).toUpperCase() : '#'}
           </div>
           <div className="ml-3">
-            <h2 className="font-semibold text-foreground text-sm">{contact.fullName || contact.whatsappNumber}</h2>
+            <div className="flex items-center">
+              <h2 className="font-semibold text-foreground text-sm">{contact.fullName || contact.whatsappNumber}</h2>
+              {onSync && (
+                <button 
+                  onClick={onSync}
+                  disabled={syncing}
+                  className={`ml-2 p-1 hover:bg-muted text-muted-foreground hover:text-foreground rounded transition-colors ${syncing ? 'animate-spin' : ''}`}
+                  title="Sinkronisasi Pesan dengan WAHA"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground">{contact.whatsappNumber}</p>
           </div>
         </div>

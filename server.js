@@ -70,6 +70,10 @@ app.prepare().then(() => {
     setInterval(runAutoFollowUp, 30 * 60 * 1000); // Runs every 30 minutes
     // Run once 1 minute after boot to process any pending items
     setTimeout(runAutoFollowUp, 60 * 1000);
+
+    // Start background WAHA status check (runs every 15s, and first check after 2s)
+    setInterval(checkWahaSessionStatus, 15000);
+    setTimeout(checkWahaSessionStatus, 2000);
   });
 });
 
@@ -248,4 +252,44 @@ async function runAutoFollowUp() {
     console.error('[Auto Follow-Up] Error in background task:', err);
   }
 }
+
+let lastKnownWahaStatus = null;
+async function checkWahaSessionStatus() {
+  try {
+    const WAHA_URL = process.env.WAHA_API_URL || 'http://webhaus-waha:3000';
+    const WAHA_KEY = process.env.WAHA_API_KEY || 'webhaus-waha-key';
+    const WAHA_SESSION = process.env.WAHA_SESSION || 'default';
+    
+    const res = await fetch(`${WAHA_URL}/api/sessions/${WAHA_SESSION}`, {
+      headers: { 'X-Api-Key': WAHA_KEY }
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      const currentStatus = data?.status || 'disconnected';
+      const engineState = data?.engine?.state || 'DISCONNECTED';
+      const isConnected = currentStatus === 'WORKING' && engineState === 'CONNECTED';
+      const statusStr = isConnected ? 'CONNECTED' : (currentStatus === 'WORKING' ? 'SYNCING' : 'DISCONNECTED');
+      
+      if (statusStr !== lastKnownWahaStatus) {
+        lastKnownWahaStatus = statusStr;
+        console.log(`[WAHA Session Status Change] Status: ${statusStr}`);
+        if (global.__socketIO) {
+          global.__socketIO.emit('waha_session_status', { status: statusStr });
+        }
+      }
+    } else {
+      throw new Error(`WAHA status response: ${res.status}`);
+    }
+  } catch (err) {
+    if (lastKnownWahaStatus !== 'DISCONNECTED') {
+      lastKnownWahaStatus = 'DISCONNECTED';
+      console.log(`[WAHA Session Status Change] Status: DISCONNECTED (Error: ${err.message})`);
+      if (global.__socketIO) {
+        global.__socketIO.emit('waha_session_status', { status: 'DISCONNECTED' });
+      }
+    }
+  }
+}
+
 

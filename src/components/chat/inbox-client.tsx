@@ -92,6 +92,30 @@ export function InboxClient({
 
   const selectedContact = contacts.find(c => c.id === selectedContactId) || null;
 
+  const [wahaStatus, setWahaStatus] = useState<"CONNECTED" | "SYNCING" | "DISCONNECTED">("CONNECTED");
+  const [syncingContactId, setSyncingContactId] = useState<string | null>(null);
+
+  // Reconcile function (sync missing messages)
+  const reconcileChat = useCallback(async (contactId: string) => {
+    setSyncingContactId(contactId);
+    try {
+      const res = await fetch('/api/waha/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        console.log(`[WAHA Auto-Reconcile] Synced ${data.syncedCount} messages`);
+      }
+    } catch (err) {
+      console.error("[WAHA Sync Error]:", err);
+    } finally {
+      setSyncingContactId(null);
+    }
+  }, []);
+
+
   // Request notification permissions on mount
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
@@ -100,6 +124,44 @@ export function InboxClient({
       }
     }
   }, []);
+
+  // Load initial WAHA session status
+  useEffect(() => {
+    fetch('/api/waha/status')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.status) {
+          setWahaStatus(data.status);
+        }
+      })
+      .catch(err => console.error("Failed to load WAHA status:", err));
+  }, []);
+
+  // Auto-sync on window focus
+  useEffect(() => {
+    const handleFocus = () => {
+      if (selectedContactId) {
+        reconcileChat(selectedContactId);
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [selectedContactId, reconcileChat]);
+
+  // Auto-sync on socket reconnect
+  useEffect(() => {
+    if (isConnected && selectedContactId) {
+      reconcileChat(selectedContactId);
+    }
+  }, [isConnected, selectedContactId, reconcileChat]);
+
+  // Auto-sync when active contact is selected
+  useEffect(() => {
+    if (selectedContactId) {
+      reconcileChat(selectedContactId);
+    }
+  }, [selectedContactId, reconcileChat]);
+
 
   const showSlaNotification = useCallback((patientName: string) => {
     playAlertSound();
@@ -203,12 +265,20 @@ export function InboxClient({
       }
     };
 
+    const handleWahaSessionStatus = (data: { status: "CONNECTED" | "SYNCING" | "DISCONNECTED" }) => {
+      if (data && data.status) {
+        setWahaStatus(data.status);
+      }
+    };
+
     socket.on("inbox_update", handleInboxUpdate);
     socket.on("contact_assigned", handleContactAssigned);
+    socket.on("waha_session_status", handleWahaSessionStatus);
 
     return () => {
       socket.off("inbox_update", handleInboxUpdate);
       socket.off("contact_assigned", handleContactAssigned);
+      socket.off("waha_session_status", handleWahaSessionStatus);
     };
   }, [socket, currentUser, selectedContactId, contacts, showIncomingNotification]);
 
@@ -245,10 +315,22 @@ export function InboxClient({
   }, [contacts, showSlaNotification]);
 
   return (
-    <div className="flex flex-1 w-full h-full overflow-hidden relative p-4 gap-4 bg-background">
+    <div className="flex flex-1 w-full h-full overflow-hidden relative p-4 gap-4 bg-background pt-10">
+      {/* WAHA Session Status Banner */}
+      {wahaStatus === 'DISCONNECTED' && (
+        <div className="absolute top-0 left-0 right-0 bg-rose-500 text-white text-center py-2 text-xs font-bold z-40 animate-in slide-in-from-top-4 duration-200">
+          ⚠️ WhatsApp Terputus! Silakan periksa koneksi WhatsApp di menu Pengaturan / VPS Anda agar chat dapat masuk.
+        </div>
+      )}
+      {wahaStatus === 'SYNCING' && (
+        <div className="absolute top-0 left-0 right-0 bg-amber-500 text-white text-center py-2 text-xs font-bold z-40 animate-in slide-in-from-top-4 duration-200">
+          🔄 WhatsApp sedang sinkronisasi data dengan server... Mohon tunggu sebentar.
+        </div>
+      )}
+
       {/* Connection Status Indicator */}
       {!isConnected && (
-        <div className="absolute top-3 left-1/2 transform -translate-x-1/2 bg-amber-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center gap-2 text-xs font-semibold">
+        <div className="absolute top-12 left-1/2 transform -translate-x-1/2 bg-amber-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center gap-2 text-xs font-semibold">
           <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
           Menghubungkan ulang...
         </div>
@@ -256,7 +338,7 @@ export function InboxClient({
 
       {/* Toast Alert Popups */}
       {toastMessage && (
-        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-foreground text-background px-5 py-3 rounded-xl shadow-2xl z-50 flex items-center gap-2 border border-border/20 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="absolute top-14 left-1/2 transform -translate-x-1/2 bg-foreground text-background px-5 py-3 rounded-xl shadow-2xl z-50 flex items-center gap-2 border border-border/20 animate-in fade-in slide-in-from-top-2 duration-200">
           <span className="text-sm font-semibold">{toastMessage}</span>
         </div>
       )}
@@ -280,6 +362,8 @@ export function InboxClient({
             onContactUpdated={(updated) => {
               setContacts(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c));
             }}
+            onSync={() => reconcileChat(selectedContact.id)}
+            syncing={syncingContactId === selectedContact.id}
           />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-3 bg-surface-secondary">
