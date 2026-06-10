@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Search, Sparkles, Upload, Download, X, CheckCircle } from 'lucide-react';
+import { Search, Sparkles, Upload, Download, X, CheckCircle, LayoutList, Kanban } from 'lucide-react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { LeadDetailsSlideout } from './lead-details-slideout';
+import { LeadsPipelineClient } from './leads-pipeline';
 
 type Stage = { id: string; name: string; color: string };
 type Agent = { id: string; fullName: string };
@@ -61,6 +62,7 @@ export function LeadsTableClient({
   const [contacts, setContacts] = useState<Contact[]>(initialContacts);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
 
   // Import state
   const [importLoading, setImportLoading] = useState(false);
@@ -177,6 +179,49 @@ export function LeadsTableClient({
     }).format(val);
   };
 
+  // Kanban mode: render pipeline directly (full height, no scroll wrapper)
+  if (viewMode === 'kanban') {
+    return (
+      <div className="flex flex-col h-full">
+        {/* Sticky top controls bar */}
+        <div className="flex items-center justify-between px-4 md:px-6 lg:px-8 py-4 border-b border-slate-200/60 bg-white/80 backdrop-blur-sm shrink-0">
+          <div>
+            <h1 className="text-xl font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
+              Leads — Kanban Pipeline
+              <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">DRAG & DROP</span>
+            </h1>
+            <p className="text-xs text-slate-400 font-medium mt-0.5">{contacts.length} pasien terdaftar</p>
+          </div>
+          {/* View Toggle */}
+          <div className="flex items-center gap-1 bg-slate-100/80 border border-slate-200/60 rounded-xl p-1">
+            <button
+              onClick={() => setViewMode('table')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 hover:text-slate-600 transition-all"
+            >
+              <LayoutList className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Tabel</span>
+            </button>
+            <button
+              onClick={() => setViewMode('kanban')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-primary shadow-sm border border-slate-200/80 transition-all"
+            >
+              <Kanban className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Kanban</span>
+            </button>
+          </div>
+        </div>
+        {/* Kanban Board */}
+        <div className="flex-1 overflow-hidden">
+          <LeadsPipelineClient
+            initialContacts={contacts}
+            stages={stages}
+            agents={agents}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-slate-50/40 p-4 md:p-6 lg:p-8 space-y-6 overflow-y-auto no-scrollbar">
       {/* Hidden file input for import */}
@@ -224,6 +269,33 @@ export function LeadsTableClient({
         </div>
         
         <div className="flex flex-wrap items-center gap-3">
+          {/* View Mode Toggle */}
+          <div className="flex items-center gap-1 bg-slate-100/80 border border-slate-200/60 rounded-xl p-1">
+            <button
+              onClick={() => setViewMode('table')}
+              title="Tampilan Tabel"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 ${
+                viewMode === 'table'
+                  ? 'bg-white text-primary shadow-sm border border-slate-200/80'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <LayoutList className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Tabel</span>
+            </button>
+            <button
+              onClick={() => setViewMode('kanban')}
+              title="Tampilan Kanban"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 ${
+                (viewMode as string) === 'kanban'
+                  ? 'bg-white text-primary shadow-sm border border-slate-200/80'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <Kanban className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Kanban</span>
+            </button>
+          </div>
           {/* Search bar */}
           <div className="relative min-w-[220px] w-full md:w-auto">
             <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
