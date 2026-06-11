@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
-import { sendWahaMessage, buildAssignNotificationText } from '@/lib/waha';
+import { sendTwilioMessage, buildAssignNotificationText } from '@/lib/twilio';
 
 export async function POST(
   request: Request,
@@ -104,7 +104,7 @@ export async function POST(
         contactPhone: contact.whatsappNumber,
       });
       // Non-blocking — don't await, failure won't break assign
-      sendWahaMessage(assignedToWa, notifText).catch((err) =>
+      sendTwilioMessage(assignedToWa, notifText).catch((err) =>
         console.error('[Assign Notif] Failed to send WA:', err)
       );
     }

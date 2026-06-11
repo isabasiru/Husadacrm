@@ -9,9 +9,9 @@
  *   "done"            → Onboarding complete, hand off to agent
  */
 
-import { Prisma } from '@prisma/client';
+import { Prisma, Product } from '@prisma/client';
 import prisma from '@/lib/prisma';
-import { sendWahaMessage } from '@/lib/waha';
+import { sendTwilioMessage } from '@/lib/twilio';
 
 type ChatbotData = {
   step?: string;
@@ -33,18 +33,23 @@ function isGreeting(text: string): boolean {
 }
 
 /**
- * Fetch active products for chatbot listing
+ * Fetch active parent products for chatbot listing
  */
-async function getActiveProducts(): Promise<string> {
-  const products = await prisma.product.findMany({
-    where: { isActive: true },
+async function getParentProducts() {
+  return prisma.product.findMany({
+    where: { isActive: true, parentId: null },
     orderBy: { sortOrder: 'asc' },
-    select: { name: true },
   });
+}
 
-  if (products.length === 0) return '';
-
-  return products.map((p, i) => `  ${i + 1}. ${p.name}`).join('\n');
+/**
+ * Fetch active sub-products for a parent
+ */
+async function getSubProducts(parentId: string) {
+  return prisma.product.findMany({
+    where: { isActive: true, parentId },
+    orderBy: { sortOrder: 'asc' },
+  });
 }
 
 /**
@@ -60,69 +65,136 @@ export async function handleChatbotFlow(
 ): Promise<boolean> {
   const trimmed = incomingText?.trim() || '';
 
-  // ── STEP 0: New contact (no state yet) — Greet and ask about product ──
-  if (!currentState) {
-    const productList = await getActiveProducts();
-    const productQuestion = productList
+  // ── STEP 0: New contact (no state yet) — Greet and ask about product category ──
+  if (!currentState || currentState === 'ask_product') {
+    const parents = await getParentProducts();
+    const parentList = parents.map((p, i) => `  ${i + 1}. ${p.name}`).join('\n');
+    const productQuestion = parentList
       ? `Halo! 👋 Selamat datang di *Husada*.\n\n` +
         `Sebelum kami hubungkan dengan tim agen, layanan atau produk apa yang sedang Anda minati?\n\n` +
-        `Layanan kami:\n${productList}\n\n` +
+        `Layanan kami:\n${parentList}\n\n` +
         `Silakan ketik nomor layanan atau ceritakan keluhan Anda.`
       : `Halo! 👋 Selamat datang di *Husada*.\n\n` +
         `Sebelum kami hubungkan dengan tim agen, ada pertanyaan atau keluhan apa yang ingin Anda sampaikan? Silakan ceritakan.`;
 
-    await sendWahaMessage(contactPhone, productQuestion);
+    await sendTwilioMessage(contactPhone, productQuestion);
     await prisma.contact.update({
       where: { id: contactId },
       data: {
-        chatbotState: 'ask_product',
+        chatbotState: 'ask_product_parent',
       },
     });
     return true;
   }
 
-  // ── STEP 1: Waiting for product choice / complaint ──
-  if (currentState === 'ask_product') {
-    if (trimmed.length < 2) {
-      await sendWahaMessage(contactPhone, 'Mohon pilih layanan atau ceritakan keluhan Anda terlebih dahulu 🙏');
+  // ── STEP 1: Waiting for parent product choice / category selection ──
+  if (currentState === 'ask_product_parent') {
+    if (trimmed.length < 1) {
+      await sendTwilioMessage(contactPhone, 'Mohon pilih layanan atau ceritakan keluhan Anda terlebih dahulu 🙏');
       return true;
     }
 
-    // Try to match product by number selection
-    let interestedProductId: string | undefined;
+    // Try to match product category by number selection
+    let chosenParent: Product | null = null;
     const numericChoice = parseInt(trimmed);
     if (!isNaN(numericChoice)) {
-      const products = await prisma.product.findMany({
-        where: { isActive: true },
-        orderBy: { sortOrder: 'asc' },
-        select: { id: true },
-      });
-      if (numericChoice >= 1 && numericChoice <= products.length) {
-        interestedProductId = products[numericChoice - 1].id;
+      const parents = await getParentProducts();
+      if (numericChoice >= 1 && numericChoice <= parents.length) {
+        chosenParent = parents[numericChoice - 1];
       }
     }
 
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        chiefComplaint: trimmed,
-        initialQuestion: trimmed,
-        chatbotState: 'ask_name',
-        ...(interestedProductId ? { interestedProductId } : {}),
-      },
-    });
+    if (chosenParent) {
+      // Check if it has sub-products
+      const subs = await getSubProducts(chosenParent.id);
+      if (subs.length > 0) {
+        const subList = subs.map((s, i) => `  ${i + 1}. ${s.name}`).join('\n');
+        await sendTwilioMessage(
+          contactPhone,
+          `Menarik! Kami memiliki beberapa pilihan untuk *${chosenParent.name}*:\n\n${subList}\n\nSilakan ketik nomor pilihan Anda.`
+        );
+        await prisma.contact.update({
+          where: { id: contactId },
+          data: {
+            chatbotState: 'ask_product_child',
+            chatbotData: { parentId: chosenParent.id, complaint: trimmed }
+          },
+        });
+        return true;
+      } else {
+        // Direct match with no sub-products
+        await prisma.contact.update({
+          where: { id: contactId },
+          data: {
+            chiefComplaint: chosenParent.name,
+            initialQuestion: trimmed,
+            interestedProductId: chosenParent.id,
+            chatbotState: 'ask_name',
+            chatbotData: Prisma.DbNull
+          },
+        });
+        await sendTwilioMessage(contactPhone, `Terima kasih! Boleh kami tahu siapa nama lengkap Anda? 😊`);
+        return true;
+      }
+    } else {
+      // Fallback: treat text as initial query/complaint
+      await prisma.contact.update({
+        where: { id: contactId },
+        data: {
+          chiefComplaint: trimmed,
+          initialQuestion: trimmed,
+          chatbotState: 'ask_name',
+          chatbotData: Prisma.DbNull
+        },
+      });
+      await sendTwilioMessage(contactPhone, `Terima kasih! Boleh kami tahu siapa nama lengkap Anda? 😊`);
+      return true;
+    }
+  }
 
-    await sendWahaMessage(
-      contactPhone,
-      `Terima kasih! Boleh kami tahu siapa nama lengkap Anda? 😊`
-    );
-    return true;
+  // ── STEP 1.5: Waiting for specific sub-product choice ──
+  if (currentState === 'ask_product_child') {
+    const contact = await prisma.contact.findUnique({ where: { id: contactId } });
+    const chatbotData = (contact?.chatbotData as Record<string, string | null>) || {};
+    const parentId = chatbotData.parentId;
+
+    if (!parentId) {
+      // Reset back to parent question if state is corrupted
+      await prisma.contact.update({ where: { id: contactId }, data: { chatbotState: 'ask_product_parent' } });
+      return handleChatbotFlow(contactId, 'ask_product_parent', incomingText, contactPhone);
+    }
+
+    const numericChoice = parseInt(trimmed);
+    let chosenSub: Product | null = null;
+    const subs = await getSubProducts(parentId);
+
+    if (!isNaN(numericChoice) && numericChoice >= 1 && numericChoice <= subs.length) {
+      chosenSub = subs[numericChoice - 1];
+    }
+
+    if (chosenSub) {
+      await prisma.contact.update({
+        where: { id: contactId },
+        data: {
+          chiefComplaint: chatbotData.complaint || chosenSub.name,
+          interestedProductId: chosenSub.id,
+          chatbotState: 'ask_name',
+          chatbotData: Prisma.DbNull
+        },
+      });
+      await sendTwilioMessage(contactPhone, `Terima kasih! Boleh kami tahu siapa nama lengkap Anda? 😊`);
+      return true;
+    } else {
+      const subList = subs.map((s, i) => `  ${i + 1}. ${s.name}`).join('\n');
+      await sendTwilioMessage(contactPhone, `Pilihan tidak valid. Silakan ketik nomor pilihan Anda:\n\n${subList}`);
+      return true;
+    }
   }
 
   // ── STEP 2: Waiting for name ──
   if (currentState === 'ask_name') {
     if (trimmed.length < 2 || isGreeting(trimmed)) {
-      await sendWahaMessage(contactPhone, 'Mohon perkenalkan nama lengkap Anda untuk melanjutkan onboarding 🙏');
+      await sendTwilioMessage(contactPhone, 'Mohon perkenalkan nama lengkap Anda untuk melanjutkan onboarding 🙏');
       return true;
     }
 
@@ -134,7 +206,7 @@ export async function handleChatbotFlow(
       },
     });
 
-    await sendWahaMessage(
+    await sendTwilioMessage(
       contactPhone,
       `Terima kasih, *${trimmed}*! 😊\n\nDi kota/kabupaten mana domisili Anda saat ini?`
     );
@@ -144,7 +216,7 @@ export async function handleChatbotFlow(
   // ── STEP 3: Waiting for domicile ──
   if (currentState === 'ask_domicile') {
     if (trimmed.length < 2) {
-      await sendWahaMessage(contactPhone, 'Mohon masukkan kota/kabupaten domisili Anda 🙏');
+      await sendTwilioMessage(contactPhone, 'Mohon masukkan kota/kabupaten domisili Anda 🙏');
       return true;
     }
 
@@ -157,7 +229,7 @@ export async function handleChatbotFlow(
       },
     });
 
-    await sendWahaMessage(
+    await sendTwilioMessage(
       contactPhone,
       `Terima kasih atas informasinya! 🙏\n\n` +
         `Tim kami akan segera menghubungi Anda. Mohon tunggu sebentar ya 😊`

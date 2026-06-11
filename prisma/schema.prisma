@@ -302,10 +302,14 @@ model Product {
   category    String?   @db.VarChar(100)
   isActive    Boolean   @default(true) @map("is_active")
   sortOrder   Int       @default(0) @map("sort_order")
+  parentId    String?   @map("parent_id") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamp()
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp()
 
-  contacts Contact[]
+  // Self relation for parent-child products
+  parent      Product?   @relation("ProductHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  subProducts Product[]  @relation("ProductHierarchy")
+  contacts    Contact[]
 
   @@map("products")
 }

@@ -20,7 +20,7 @@ export async function PUT(
 
     const { id } = await params;
     const body = await request.json();
-    const { name, description, category, isActive, sortOrder } = body;
+    const { name, description, category, isActive, sortOrder, parentId } = body;
 
     const existing = await prisma.product.findUnique({ where: { id } });
     if (!existing) {
@@ -35,6 +35,7 @@ export async function PUT(
         ...(category !== undefined ? { category: category?.trim() || null } : {}),
         ...(isActive !== undefined ? { isActive } : {}),
         ...(sortOrder !== undefined ? { sortOrder } : {}),
+        ...(parentId !== undefined ? { parentId: parentId || null } : {}),
       },
     });
 

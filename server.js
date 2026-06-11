@@ -143,39 +143,16 @@ async function runAutoFollowUp() {
 
       console.log(`[Auto Follow-Up] Sending follow-up to contact ${conv.contact.fullName} (${conv.contact.whatsappNumber})...`);
 
-      // Send via WAHA API
-      const WAHA_URL = process.env.WAHA_API_URL || 'http://webhaus-waha:3000';
-      const WAHA_KEY = process.env.WAHA_API_KEY || 'webhaus-waha-key';
-      const chatId = conv.contact.whatsappNumber.includes('@') ? conv.contact.whatsappNumber : `${conv.contact.whatsappNumber}@c.us`;
-
+      // Send via Twilio JS Helper
       let wahaMessageId = null;
       try {
-        const res = await fetch(`${WAHA_URL}/api/sendText`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-Api-Key': WAHA_KEY,
-          },
-          body: JSON.stringify({
-            session: 'default',
-            chatId: chatId,
-            text: formattedMessage,
-          }),
-        });
-
-        if (!res.ok) {
-          throw new Error(`WAHA API returned status: ${res.status} ${res.statusText}`);
+        const twilioRes = await sendTwilioMessageJs(conv.contact.whatsappNumber, formattedMessage);
+        if (!twilioRes.success) {
+          throw new Error(twilioRes.error || 'Failed to send message via Twilio');
         }
-
-        const wahaResponse = await res.json();
-        if (wahaResponse && wahaResponse.id) {
-          wahaMessageId = typeof wahaResponse.id === 'object'
-            ? (wahaResponse.id._serialized || wahaResponse.id.id)
-            : wahaResponse.id;
-        }
+        wahaMessageId = twilioRes.sid;
       } catch (err) {
-        console.error(`[Auto Follow-Up] Failed to send WAHA message for contact ${conv.contact.id}:`, err);
+        console.error(`[Auto Follow-Up] Failed to send Twilio message for contact ${conv.contact.id}:`, err.message);
         continue; // skip database updates for this failure
       }
 
@@ -272,39 +249,92 @@ async function runAutoFollowUp() {
 let lastKnownWahaStatus = null;
 async function checkWahaSessionStatus() {
   try {
-    const WAHA_URL = process.env.WAHA_API_URL || 'http://webhaus-waha:3000';
-    const WAHA_KEY = process.env.WAHA_API_KEY || 'webhaus-waha-key';
-    const WAHA_SESSION = process.env.WAHA_SESSION || 'default';
-    
-    const res = await fetch(`${WAHA_URL}/api/sessions/${WAHA_SESSION}`, {
-      headers: { 'X-Api-Key': WAHA_KEY }
-    });
-    
-    if (res.ok) {
-      const data = await res.json();
-      const currentStatus = data?.status || 'disconnected';
-      const engineState = data?.engine?.state || 'DISCONNECTED';
-      const isConnected = currentStatus === 'WORKING' && engineState === 'CONNECTED';
-      const statusStr = isConnected ? 'CONNECTED' : (currentStatus === 'WORKING' ? 'SYNCING' : 'DISCONNECTED');
-      
-      if (statusStr !== lastKnownWahaStatus) {
-        lastKnownWahaStatus = statusStr;
-        console.log(`[WAHA Session Status Change] Status: ${statusStr}`);
-        if (global.__socketIO) {
-          global.__socketIO.emit('waha_session_status', { status: statusStr });
+    const settings = await prisma.systemSetting.findMany({
+      where: {
+        key: {
+          in: ['twilio_account_sid', 'twilio_auth_token', 'twilio_whatsapp_number']
         }
       }
-    } else {
-      throw new Error(`WAHA status response: ${res.status}`);
+    });
+
+    const config = {};
+    settings.forEach(s => {
+      config[s.key] = s.value;
+    });
+
+    const isConnected = !!(
+      (config.twilio_account_sid || process.env.TWILIO_ACCOUNT_SID) &&
+      (config.twilio_auth_token || process.env.TWILIO_AUTH_TOKEN) &&
+      (config.twilio_whatsapp_number || process.env.TWILIO_WHATSAPP_NUMBER)
+    );
+
+    const statusStr = isConnected ? 'CONNECTED' : 'DISCONNECTED';
+    
+    if (statusStr !== lastKnownWahaStatus) {
+      lastKnownWahaStatus = statusStr;
+      console.log(`[Twilio Session Status Change] Status: ${statusStr}`);
+      if (global.__socketIO) {
+        global.__socketIO.emit('waha_session_status', { status: statusStr });
+      }
     }
   } catch (err) {
     if (lastKnownWahaStatus !== 'DISCONNECTED') {
       lastKnownWahaStatus = 'DISCONNECTED';
-      console.log(`[WAHA Session Status Change] Status: DISCONNECTED (Error: ${err.message})`);
+      console.log(`[Twilio Status Check Error]: DISCONNECTED (Error: ${err.message})`);
       if (global.__socketIO) {
         global.__socketIO.emit('waha_session_status', { status: 'DISCONNECTED' });
       }
     }
+  }
+}
+
+async function sendTwilioMessageJs(to, text) {
+  try {
+    const settings = await prisma.systemSetting.findMany({
+      where: {
+        key: {
+          in: ['twilio_account_sid', 'twilio_auth_token', 'twilio_whatsapp_number']
+        }
+      }
+    });
+
+    const config = {};
+    settings.forEach(s => {
+      config[s.key] = s.value;
+    });
+
+    const accountSid = config.twilio_account_sid || process.env.TWILIO_ACCOUNT_SID;
+    const authToken = config.twilio_auth_token || process.env.TWILIO_AUTH_TOKEN;
+    const whatsappNumber = config.twilio_whatsapp_number || process.env.TWILIO_WHATSAPP_NUMBER;
+
+    if (!accountSid || !authToken || !whatsappNumber) {
+      return { success: false, error: 'Twilio settings not fully configured in system_settings' };
+    }
+
+    const twilio = require('twilio');
+    const client = twilio(accountSid, authToken);
+
+    let cleanTo = to.replace(/\D/g, '');
+    if (cleanTo.startsWith('0')) {
+      cleanTo = '62' + cleanTo.slice(1);
+    }
+    const toFormatted = `whatsapp:+${cleanTo}`;
+
+    let cleanFrom = whatsappNumber.replace(/\D/g, '');
+    if (cleanFrom.startsWith('0')) {
+      cleanFrom = '62' + cleanFrom.slice(1);
+    }
+    const fromFormatted = `whatsapp:+${cleanFrom}`;
+
+    const message = await client.messages.create({
+      from: fromFormatted,
+      to: toFormatted,
+      body: text
+    });
+
+    return { success: true, sid: message.sid, status: message.status };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
 }
 

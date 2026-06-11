@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma';
 import { InboxClient } from '@/components/chat/inbox-client';
 import { Metadata } from 'next';
 import { getSession } from '@/lib/auth';
+import { Prisma } from '@prisma/client';
 
 export const metadata: Metadata = {
   title: 'Inbox - Husada CRM',
@@ -24,7 +25,12 @@ export default async function InboxPage() {
   }
 
   // Ambil daftar kontak di sisi server untuk initial load dengan relasi lengkap
-  const contactFilter = session?.role === 'AGENT' ? { assignedAgentId: session.userId } : {};
+  const contactFilter: Prisma.ContactWhereInput = {
+    totalMessages: { gt: 0 }
+  };
+  if (session?.role === 'AGENT') {
+    contactFilter.assignedAgentId = session.userId;
+  }
   const initialContacts = await prisma.contact.findMany({
     where: contactFilter,
     orderBy: { lastInteractionAt: 'desc' },

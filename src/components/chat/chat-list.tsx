@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, AlertCircle } from "lucide-react";
+import { Search, AlertCircle, Trash2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { id } from "date-fns/locale";
 import { Contact, Stage, ContactTag, Tag } from "@prisma/client";
@@ -15,11 +15,13 @@ export function ChatList({
   contacts, 
   selectedId, 
   onSelect,
+  onDelete,
   stages = []
 }: { 
   contacts: ContactWithRelations[],
   selectedId: string | null,
   onSelect: (id: string) => void,
+  onDelete?: (id: string, name: string | null) => void,
   stages: Stage[]
 }) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -98,7 +100,7 @@ export function ChatList({
               <div 
                 key={contact.id}
                 onClick={() => onSelect(contact.id)}
-                className={`px-4 py-3.5 border-b border-border/50 cursor-pointer transition-all flex items-start gap-3 relative ${
+                className={`px-4 py-3.5 border-b border-border/50 cursor-pointer transition-all flex items-start gap-3 relative group ${
                   isSelected 
                     ? 'bg-primary/5 border-l-[3px] border-l-primary' 
                     : 'hover:bg-muted/50'
@@ -165,6 +167,16 @@ export function ChatList({
                     )}
                   </div>
                 </div>
+                {/* Delete button — visible on hover */}
+                {onDelete && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDelete(contact.id, contact.fullName); }}
+                    className="absolute top-2 right-2 p-1 rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all"
+                    title="Hapus kontak"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                )}
               </div>
             );
           })

@@ -17,7 +17,9 @@ export async function GET(request: Request) {
     const agentId = searchParams.get('agentId') || 'all';
     const stageId = searchParams.get('stageId') || 'all';
 
-    const whereClause: Prisma.ContactWhereInput = {};
+    const whereClause: Prisma.ContactWhereInput = {
+      totalMessages: { gt: 0 }
+    };
     
     // Role-based restrictions (Agents only see their assigned contacts)
     if (session.role === 'AGENT') {
@@ -39,7 +41,7 @@ export async function GET(request: Request) {
         conversations: {
           where: { status: 'OPEN' },
           take: 1,
-          select: {
+          include: {
             lastRepliedBy: {
               select: { fullName: true }
             }

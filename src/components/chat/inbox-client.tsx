@@ -190,6 +190,21 @@ export function InboxClient({
     }
   }, []);
 
+  const handleDeleteContact = useCallback(async (id: string, name: string | null) => {
+    if (!confirm(`Hapus kontak "${name || 'ini'}"? Semua riwayat percakapan akan ikut terhapus.`)) return;
+    // Optimistic remove from list
+    setContacts(prev => prev.filter(c => c.id !== id));
+    if (selectedContactId === id) setSelectedContactId(null);
+    try {
+      const res = await fetch(`/api/contacts/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed');
+    } catch (err) {
+      console.error('Delete contact error:', err);
+      alert('Gagal menghapus kontak.');
+      window.location.reload();
+    }
+  }, [selectedContactId]);
+
   // 1. Real-time updates & Handovers (Socket.io)
   useEffect(() => {
     if (!socket) return;
@@ -299,14 +314,25 @@ export function InboxClient({
       }
     };
 
+    const handleChatCleared = (data: { contactId: string }) => {
+      if (data && data.contactId) {
+        setContacts(prev => prev.filter(c => c.id !== data.contactId));
+        if (selectedContactId === data.contactId) {
+          setSelectedContactId(null);
+        }
+      }
+    };
+
     socket.on("inbox_update", handleInboxUpdate);
     socket.on("contact_assigned", handleContactAssigned);
     socket.on("waha_session_status", handleWahaSessionStatus);
+    socket.on("chat_cleared", handleChatCleared);
 
     return () => {
       socket.off("inbox_update", handleInboxUpdate);
       socket.off("contact_assigned", handleContactAssigned);
       socket.off("waha_session_status", handleWahaSessionStatus);
+      socket.off("chat_cleared", handleChatCleared);
     };
   }, [socket, currentUser, selectedContactId, contacts, showIncomingNotification]);
 
@@ -377,6 +403,7 @@ export function InboxClient({
           contacts={contacts} 
           selectedId={selectedContactId} 
           onSelect={setSelectedContactId}
+          onDelete={handleDeleteContact}
           stages={stages}
         />
       </div>

@@ -48,10 +48,42 @@ interface SettingsClientProps {
 }
 
 export function SettingsClient({ initialTemplates, initialUsers, initialProducts }: SettingsClientProps) {
-  const [activeTab, setActiveTab] = useState<'templates' | 'users' | 'automation' | 'products'>('templates');
+  const [activeTab, setActiveTab] = useState<'templates' | 'users' | 'automation' | 'products' | 'waha'>('templates');
   const [templates, setTemplates] = useState<MessageTemplate[]>(initialTemplates);
   const [users, setUsers] = useState<UserType[]>(initialUsers);
   
+  // WAHA connection manager state
+  const [wahaSessionStatus, setWahaSessionStatus] = useState<"CONNECTED" | "SYNCING" | "DISCONNECTED">("DISCONNECTED");
+  const [wahaLoading, setWahaLoading] = useState(false);
+  const [screenshotTime, setScreenshotTime] = useState(Date.now());
+
+  const fetchWahaStatus = async () => {
+    try {
+      const res = await fetch('/api/waha/status');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status) {
+          setWahaSessionStatus(data.status);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load WAHA status:", err);
+    }
+  };
+
+  // Twilio settings state
+  const [twilioAccountSid, setTwilioAccountSid] = useState("");
+  const [twilioAuthToken, setTwilioAuthToken] = useState("");
+  const [twilioWhatsappNumber, setTwilioWhatsappNumber] = useState("");
+
+  useEffect(() => {
+    fetchWahaStatus();
+    const interval = setInterval(() => {
+      fetchWahaStatus();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [activeTab]);
+
   // Automation Settings State
   const [autoFollowupEnabled, setAutoFollowupEnabled] = useState(false);
   const [autoFollowupHours, setAutoFollowupHours] = useState(24);
@@ -83,7 +115,7 @@ export function SettingsClient({ initialTemplates, initialUsers, initialProducts
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Fetch automation settings on mount
+  // Fetch automation and Twilio settings on mount
   useEffect(() => {
     async function loadSettings() {
       setLoadingSettings(true);
@@ -95,6 +127,9 @@ export function SettingsClient({ initialTemplates, initialUsers, initialProducts
             setAutoFollowupEnabled(data.settings.auto_followup_enabled === "true");
             setAutoFollowupHours(parseInt(data.settings.auto_followup_hours) || 24);
             setAutoFollowupTemplate(data.settings.auto_followup_template || "");
+            setTwilioAccountSid(data.settings.twilio_account_sid || "");
+            setTwilioAuthToken(data.settings.twilio_auth_token || "");
+            setTwilioWhatsappNumber(data.settings.twilio_whatsapp_number || "");
           }
         }
       } catch (err) {
@@ -347,6 +382,39 @@ export function SettingsClient({ initialTemplates, initialUsers, initialProducts
     }
   };
 
+  const handleSaveTwilioSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          twilio_account_sid: twilioAccountSid,
+          twilio_auth_token: twilioAuthToken,
+          twilio_whatsapp_number: twilioWhatsappNumber,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Gagal menyimpan pengaturan Twilio");
+      }
+
+      setSuccess("Pengaturan Twilio berhasil disimpan!");
+      setTimeout(() => setSuccess(null), 3000);
+      fetchWahaStatus(); // Refresh connection status banner
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Terjadi kesalahan saat menyimpan pengaturan Twilio";
+      setError(errorMsg);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50/50 p-4 md:p-8">
       {/* Title Banner */}
@@ -426,6 +494,17 @@ export function SettingsClient({ initialTemplates, initialUsers, initialProducts
         >
           <Zap className="w-4 h-4" />
           Otomasi & Follow Up
+        </button>
+        <button
+          onClick={() => setActiveTab('waha')}
+          className={`pb-3 px-4 font-bold border-b-2 transition-all flex items-center gap-2 text-xs md:text-sm ${
+            activeTab === 'waha'
+              ? "border-[#25D366] text-[#25D366]"
+              : "border-transparent text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <Phone className="w-4 h-4 text-[#25D366]" />
+          Koneksi WhatsApp (Twilio)
         </button>
       </div>
 
@@ -758,6 +837,126 @@ export function SettingsClient({ initialTemplates, initialUsers, initialProducts
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* ==========================================
+          TAB 5: WAHA WHATSAPP CONNECTION MANAGER
+          ========================================== */}
+      {activeTab === 'waha' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-6xl">
+          {/* Connection Status and Instructions Card */}
+          <div className="lg:col-span-1 bg-white border border-slate-200 rounded-2xl shadow-sm p-6 space-y-6 flex flex-col justify-between">
+            <div className="space-y-4">
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 border-b pb-3">
+                <Phone className="w-5 h-5 text-[#25D366]" />
+                Status WhatsApp (Twilio)
+              </h2>
+
+              {/* Status Indicator Badge */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-700 block">Status Koneksi</label>
+                <div className="flex items-center gap-3">
+                  <div className={`w-3.5 h-3.5 rounded-full ${
+                    wahaSessionStatus === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+                  }`}></div>
+                  <span className={`text-sm font-extrabold ${
+                    wahaSessionStatus === 'CONNECTED' ? 'text-emerald-700' : 'text-rose-700'
+                  }`}>
+                    {wahaSessionStatus === 'CONNECTED' ? 'TERHUBUNG' : 'TERPUTUS'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  {wahaSessionStatus === 'CONNECTED' 
+                    ? "Kredensial Twilio Anda terpasang dan siap mengirim/menerima pesan." 
+                    : "Lengkapi kredensial Twilio Account SID, Auth Token, dan WhatsApp Number di formulir samping untuk menghubungkan."}
+                </p>
+              </div>
+
+              {/* Webhook Instructions */}
+              <div className="border-t border-slate-100 pt-4 space-y-3">
+                <label className="text-xs font-bold text-slate-700 block">URL Webhook Twilio Anda</label>
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  Salin URL di bawah ini ke konfigurasi Sandbox/WhatsApp Sender di Twilio Console pada kolom <strong>&quot;When a message comes in&quot;</strong> dan <strong>&quot;Status callback URL&quot;</strong>:
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value="https://husada.webhaus.id/api/twilio/webhook"
+                    className="flex-1 px-3 py-1.5 border border-slate-200 bg-slate-50 rounded-lg outline-none text-[11px] text-slate-500 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText("https://husada.webhaus.id/api/twilio/webhook");
+                      alert("Webhook URL berhasil disalin!");
+                    }}
+                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all border border-slate-200"
+                  >
+                    Salin
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Twilio Configuration Form Card */}
+          <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-sm p-6 space-y-4">
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 border-b pb-3">
+              <Zap className="w-5 h-5 text-amber-500" />
+              Konfigurasi Kredensial Twilio
+            </h2>
+
+            <form onSubmit={handleSaveTwilioSettings} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700 block">Twilio Account SID</label>
+                <input
+                  type="text"
+                  placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  value={twilioAccountSid}
+                  onChange={(e) => setTwilioAccountSid(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-[#1A56DB] text-xs text-slate-700 bg-white"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700 block">Twilio Auth Token</label>
+                <input
+                  type="password"
+                  placeholder="Ketik Auth Token Anda disini..."
+                  value={twilioAuthToken}
+                  onChange={(e) => setTwilioAuthToken(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-[#1A56DB] text-xs text-slate-700 bg-white"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700 block">Twilio WhatsApp Sender Number</label>
+                <input
+                  type="text"
+                  placeholder="Misal: +14155238886 (sandbox) atau nomor berbayar Anda"
+                  value={twilioWhatsappNumber}
+                  onChange={(e) => setTwilioWhatsappNumber(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-[#1A56DB] text-xs text-slate-700 bg-white"
+                  required
+                />
+                <p className="text-[10px] text-slate-400">Pastikan menyertakan kode negara, misal: +14155238886.</p>
+              </div>
+
+              <div className="flex justify-end pt-4 border-t border-slate-100">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-5 py-2.5 bg-[#1A56DB] hover:bg-[#1A56DB]/90 text-white rounded-xl text-xs font-bold shadow-md disabled:opacity-50 transition-colors"
+                >
+                  {isSubmitting ? "Menyimpan..." : "Simpan Kredensial Twilio"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

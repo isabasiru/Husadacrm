@@ -14,6 +14,10 @@ export async function GET() {
 
     const products = await prisma.product.findMany({
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      include: {
+        parent: { select: { id: true, name: true } },
+        subProducts: { where: { isActive: true } }
+      }
     });
 
     return NextResponse.json({ success: true, products });
@@ -35,7 +39,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { name, description, category, isActive, sortOrder } = body;
+    const { name, description, category, isActive, sortOrder, parentId } = body;
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return NextResponse.json({ error: 'Product name is required' }, { status: 400 });
@@ -48,6 +52,7 @@ export async function POST(request: Request) {
         category: category?.trim() || null,
         isActive: isActive !== false,
         sortOrder: typeof sortOrder === 'number' ? sortOrder : 0,
+        parentId: parentId || null,
       },
     });
 

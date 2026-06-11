@@ -59,3 +59,37 @@ Allows uploading bulk leads and exporting current databases to Excel worksheets.
 ### Export Leads:
 * **Endpoint**: `/api/contacts/export`
 * **Features**: Exports the list of contacts to a downloadable Excel sheet, matching current search, stage, or assignment filters in real-time.
+
+---
+
+## 5. 🗑️ Hapus Riwayat Chat & Real-Time Inbox Sync
+Allows clearing messages for a specific contact and updating the inbox list instantly without manual browser refresh.
+
+### Features:
+* **Clear Messages Endpoint**: `DELETE /api/messages?contactId=[id]` deletes all message database entries linked to the contact.
+* **Counter Reset**: Resets the contact's `totalMessages` counter to `0` and sets `lastInteractionAt` to `null`.
+* **Sidebar Clean-up**:
+  * Broadcasts `chat_cleared` via Socket.io.
+  * The front-end sidebar list filters out contacts with `totalMessages <= 0` in real-time, removing the contact from the active inbox list.
+  * Server-side queries also enforce `totalMessages > 0` to prevent cleared contacts from appearing on page refresh.
+
+---
+
+## 6. 📱 Koneksi WhatsApp (WAHA Session Manager & QR Monitor)
+Provides an interface under Settings to monitor and manage the WhatsApp Web connection on the VPS.
+
+### Features:
+* **Status Endpoint**: `GET /api/waha/status` returns connection status (`CONNECTED`, `SYNCING`, `DISCONNECTED`).
+* **Session Controller**: `POST /api/waha/session` triggers `start`, `stop`, or `logout` actions to manage the headless browser session.
+* **Live Monitor**: `GET /api/waha/screenshot` proxies the WhatsApp Web screenshot from the WAHA engine.
+* **QR Code Display**: Displays the live screenshot in the Settings UI (auto-refreshing every 5 seconds if disconnected) so admins can easily scan the QR code to link their phone number.
+
+---
+
+## 7. 🤖 Kontrol Chatbot AI Per Kontak
+Enables manual override of the automated onboarding chatbot for individual contacts.
+
+### Features:
+* **Toggles**: Button in the chat area dropdown menu next to "Hapus Riwayat Chat".
+* **Nonaktifkan Chatbot AI**: Updates the contact's `chatbotState` to `'done'`, which halts automated bot responses.
+* **Aktifkan Chatbot AI**: Resets the contact's `chatbotState` to `null`, prompting the bot to restart its onboarding greeting flow on the next incoming message.

@@ -21,6 +21,15 @@ export async function GET(
         assignedAgent: true,
         customFields: true,
         tags: { include: { tag: true } },
+        conversations: {
+          where: { status: 'OPEN' },
+          take: 1,
+          include: {
+            lastRepliedBy: {
+              select: { fullName: true }
+            }
+          }
+        }
       }
     });
 
@@ -61,7 +70,8 @@ export async function PATCH(
       stageId,
       assignedAgentId,
       revenue,
-      client_type
+      client_type,
+      chatbotState
     } = body;
 
     // Check if contact exists
@@ -89,6 +99,7 @@ export async function PATCH(
     if (notes !== undefined) updateData.notes = notes;
     if (stageId !== undefined) updateData.stageId = stageId === 'null' ? null : stageId;
     if (assignedAgentId !== undefined) updateData.assignedAgentId = assignedAgentId === 'null' ? null : assignedAgentId;
+    if (chatbotState !== undefined) updateData.chatbotState = chatbotState;
 
     // Perform database updates
     await prisma.contact.update({
@@ -162,5 +173,33 @@ export async function PATCH(
       { error: 'Failed to update contact' },
       { status: 500 }
     );
+  }
+}
+
+// DELETE: Hapus kontak beserta semua data terkait
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { id } = await params;
+
+    const existingContact = await prisma.contact.findUnique({ where: { id } });
+    if (!existingContact) {
+      return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+    }
+
+    // Hapus contact — relasi cascade (customFields, tags, assignHistory, followUps, conversations→messages) otomatis terhapus
+    await prisma.contact.delete({ where: { id } });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting contact:', error);
+    return NextResponse.json({ error: 'Failed to delete contact' }, { status: 500 });
   }
 }

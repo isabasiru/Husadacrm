@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
 import 'socket.io'; // Force Next.js to trace and include socket.io in standalone mode
+import { sendTwilioMessage } from '@/lib/twilio';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,44 +83,19 @@ export async function POST(request: Request) {
     const isInternalNote = type === 'NOTE';
     let wahaMessageId = null;
 
-    // Jika bukan catatan internal, kirim ke WAHA
+    // Jika bukan catatan internal, kirim ke Twilio
     if (!isInternalNote) {
-      const WAHA_URL = process.env.WAHA_API_URL || 'http://webhaus-waha:3000';
-      const WAHA_KEY = process.env.WAHA_API_KEY || 'webhaus-waha-key';
+      const twilioRes = await sendTwilioMessage(contact.whatsappNumber, content);
 
-      // WAHA uses session parameter. We assume session 'default' for now.
-      const chatId = contact.whatsappNumber.includes('@') ? contact.whatsappNumber : `${contact.whatsappNumber}@c.us`;
-      const payload = {
-        session: 'default',
-        chatId: chatId,
-        text: content,
-      };
-
-      const res = await fetch(`${WAHA_URL}/api/sendText`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-Api-Key': WAHA_KEY,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        console.error(`[WAHA] Failed to send message: ${res.statusText}`);
+      if (!twilioRes.success) {
+        console.error(`[Twilio] Failed to send message: ${twilioRes.error}`);
         return NextResponse.json(
-          { error: 'Failed to send message via WAHA' },
+          { error: twilioRes.error || 'Failed to send message via Twilio' },
           { status: 502 }
         );
       }
 
-      const wahaResponse = await res.json();
-      // Simpan ID WAHA jika dikembalikan untuk tracking status ACK nanti
-      if (wahaResponse && wahaResponse.id) {
-        wahaMessageId = typeof wahaResponse.id === 'object'
-          ? (wahaResponse.id._serialized || wahaResponse.id.id)
-          : wahaResponse.id;
-      }
+      wahaMessageId = twilioRes.sid || null;
     }
 
     // Simpan ke database
@@ -202,5 +178,51 @@ export async function POST(request: Request) {
       { error: 'Internal Server Error' },
       { status: 500 }
     );
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const contactId = searchParams.get('contactId');
+
+    if (!contactId) {
+      return NextResponse.json({ error: 'contactId is required' }, { status: 400 });
+    }
+
+    // Fetch conversation of the contact
+    const conversation = await prisma.conversation.findFirst({
+      where: { contactId, status: 'OPEN' }
+    });
+
+    if (conversation) {
+      // Delete all messages in this conversation
+      await prisma.message.deleteMany({
+        where: { conversationId: conversation.id }
+      });
+    }
+
+    // Reset totalMessages counter and lastInteractionAt on contact
+    await prisma.contact.update({
+      where: { id: contactId },
+      data: { totalMessages: 0, lastInteractionAt: null }
+    });
+
+    // Notify client via Socket.io
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const globalIo = (global as any).__socketIO;
+    if (globalIo) {
+      globalIo.emit('chat_cleared', { contactId, conversationId: conversation?.id });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error clearing chat:', error);
+    return NextResponse.json({ error: 'Failed to clear chat' }, { status: 500 });
   }
 }

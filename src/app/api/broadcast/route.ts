@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
+import { sendTwilioMessage, getTwilioConfig } from '@/lib/twilio';
 
 // Sleep helper for delay
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -36,15 +37,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No contacts found for the selected target' }, { status: 404 });
     }
 
-    const WAHA_URL = process.env.WAHA_API_URL;
-    if (!WAHA_URL) {
-      return NextResponse.json({ error: 'WAHA_API_URL is not configured' }, { status: 500 });
+    const config = await getTwilioConfig();
+    if (!config.accountSid || !config.authToken || !config.whatsappNumber) {
+      return NextResponse.json({ error: 'Twilio is not configured in settings.' }, { status: 500 });
     }
 
     // Process broadcast asynchronously (fire and forget from client perspective)
     // In a production app with huge lists, use a queue (e.g. BullMQ or Inngest)
     // For now, we process in background
-    processBroadcast(contacts, message, WAHA_URL, delayMs).catch(console.error);
+    processBroadcast(contacts, message, delayMs).catch(console.error);
 
     return NextResponse.json({
       success: true,
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function processBroadcast(contacts: any[], message: string, wahaUrl: string, delayMs: number) {
+async function processBroadcast(contacts: any[], message: string, delayMs: number) {
   console.log(`[Broadcast] Starting for ${contacts.length} contacts...`);
   
   let successCount = 0;
@@ -67,29 +68,9 @@ async function processBroadcast(contacts: any[], message: string, wahaUrl: strin
 
   for (const contact of contacts) {
     try {
-      // WAHA uses session parameter. We assume session 'default' for now.
-      const payload = {
-        session: 'default',
-        chatId: `${contact.whatsappNumber}@c.us`,
-        text: message
-      };
+      const res = await sendTwilioMessage(contact.whatsappNumber, message);
 
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      };
-      const WAHA_KEY = process.env.WAHA_API_KEY || 'webhaus-waha-key';
-      if (WAHA_KEY) {
-        headers['X-Api-Key'] = WAHA_KEY;
-      }
-
-      const res = await fetch(`${wahaUrl}/api/sendText`, {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
+      if (res.success) {
         successCount++;
         // Log to db (optional: create message record)
         const conversation = await prisma.conversation.findFirst({
@@ -104,6 +85,7 @@ async function processBroadcast(contacts: any[], message: string, wahaUrl: strin
               direction: 'OUTBOUND',
               type: 'TEXT',
               content: message,
+              wahaMessageId: res.sid,
               sentAt: new Date(),
               isInternalNote: false,
               wahaStatus: 'SENT'
@@ -111,7 +93,7 @@ async function processBroadcast(contacts: any[], message: string, wahaUrl: strin
           });
         }
       } else {
-        console.error(`[Broadcast] Failed to send to ${contact.whatsappNumber}: ${res.statusText}`);
+        console.error(`[Broadcast] Failed to send to ${contact.whatsappNumber}: ${res.error}`);
         failCount++;
       }
     } catch (err) {

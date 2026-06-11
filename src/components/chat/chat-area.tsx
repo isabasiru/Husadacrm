@@ -1,5 +1,5 @@
 import { Contact, Stage, ContactTag, Tag, Message, MessageTemplate, User } from "@prisma/client";
-import { Send, Paperclip, MoreVertical, Zap, RefreshCw } from "lucide-react";
+import { Send, Paperclip, MoreVertical, Zap, RefreshCw, Trash2, Bot } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useSocket } from "@/hooks/use-socket";
 import { format } from "date-fns";
@@ -33,6 +33,7 @@ export function ChatArea({
   const [input, setInput] = useState("");
   const [isNote, setIsNote] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   
   const [agents, setAgents] = useState<User[]>([]);
   const [assignedAgentId, setAssignedAgentId] = useState<string | null>(contact.assignedAgentId);
@@ -40,6 +41,62 @@ export function ChatArea({
   const scrollRef = useRef<HTMLDivElement>(null);
   const { socket, joinConversation, leaveConversation } = useSocket();
   const prevConversationIdRef = useRef<string | null>(null);
+
+  const handleClearChat = async () => {
+    if (!confirm("Apakah Anda yakin ingin menghapus seluruh riwayat obrolan untuk pasien ini dari CRM? Tindakan ini tidak dapat dibatalkan.")) {
+      return;
+    }
+    
+    setShowMenu(false);
+    try {
+      const res = await fetch(`/api/messages?contactId=${contact.id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setMessages([]);
+        if (onContactUpdated) {
+          onContactUpdated({
+            id: contact.id,
+            totalMessages: 0,
+            lastInteractionAt: null,
+          });
+        }
+      } else {
+        alert("Gagal menghapus riwayat obrolan.");
+      }
+    } catch (err) {
+      console.error("Failed to clear chat:", err);
+      alert("Gagal menghapus riwayat obrolan.");
+    }
+  };
+
+  const handleToggleChatbot = async () => {
+    setShowMenu(false);
+    const newChatbotState = contact.chatbotState === 'done' ? null : 'done';
+    const actionText = contact.chatbotState === 'done' ? "mengaktifkan kembali" : "menonaktifkan";
+    if (!confirm(`Apakah Anda yakin ingin ${actionText} chatbot untuk pasien ini?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/contacts/${contact.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatbotState: newChatbotState }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (onContactUpdated && data.contact) {
+          onContactUpdated(data.contact);
+        }
+      } else {
+        alert("Gagal mengubah status chatbot.");
+      }
+    } catch (err) {
+      console.error("Failed to toggle chatbot:", err);
+      alert("Gagal mengubah status chatbot.");
+    }
+  };
 
   // Load agents and messages
   useEffect(() => {
@@ -108,12 +165,20 @@ export function ChatArea({
       }
     };
 
+    const handleChatCleared = (data: { contactId: string }) => {
+      if (data && data.contactId === contact.id) {
+        setMessages([]);
+      }
+    };
+
     socket.on('new_message', handleNewMessage);
+    socket.on('chat_cleared', handleChatCleared);
 
     return () => {
       socket.off('new_message', handleNewMessage);
+      socket.off('chat_cleared', handleChatCleared);
     };
-  }, [socket]);
+  }, [socket, contact.id]);
 
   // Update assignedAgentId when contact changes
   useEffect(() => {
@@ -227,9 +292,32 @@ export function ChatArea({
               ))}
             </select>
           </div>
-          <button className="p-2 hover:bg-muted rounded-lg text-muted-foreground transition-colors">
-            <MoreVertical className="w-5 h-5" />
-          </button>
+          <div className="relative">
+            <button 
+              onClick={() => setShowMenu(!showMenu)}
+              className="p-2 hover:bg-muted rounded-lg text-muted-foreground transition-colors"
+            >
+              <MoreVertical className="w-5 h-5" />
+            </button>
+            {showMenu && (
+              <div className="absolute right-0 mt-2 w-52 bg-surface border border-border shadow-xl rounded-xl overflow-hidden z-20 py-1">
+                <button
+                  onClick={handleToggleChatbot}
+                  className="w-full text-left px-4 py-2 text-xs font-bold text-foreground hover:bg-muted transition-colors flex items-center gap-2"
+                >
+                  <Bot className="w-4 h-4 text-primary" />
+                  {contact.chatbotState === 'done' ? 'Aktifkan Chatbot AI' : 'Nonaktifkan Chatbot AI'}
+                </button>
+                <button
+                  onClick={handleClearChat}
+                  className="w-full text-left px-4 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 border-t border-border/50 transition-colors flex items-center gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Hapus Riwayat Chat
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

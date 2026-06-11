@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import { Search, Sparkles, Upload, Download, X, CheckCircle, LayoutList, Kanban } from 'lucide-react';
+import { useState } from 'react';
+import { Search, Sparkles, Download, LayoutList, Kanban, Trash2 } from 'lucide-react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { LeadDetailsSlideout } from './lead-details-slideout';
 import { LeadsPipelineClient } from './leads-pipeline';
@@ -63,12 +63,7 @@ export function LeadsTableClient({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
-
-  // Import state
-  const [importLoading, setImportLoading] = useState(false);
-  const [importResult, setImportResult] = useState<{ inserted: number; skipped: number; errors: {row:number;reason:string}[] } | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
-  const importInputRef = useRef<HTMLInputElement>(null);
 
   const router = useRouter();
   const pathname = usePathname();
@@ -119,28 +114,18 @@ export function LeadsTableClient({
     setContacts(prev => prev.map(c => c.id === updatedContact.id ? { ...c, ...updatedContact } : c));
   };
 
-  // Import handler
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setImportLoading(true);
-    setImportResult(null);
+  const handleDelete = async (id: string, name: string | null) => {
+    if (!confirm(`Hapus kontak "${name || 'ini'}"? Semua data percakapan dan riwayat akan ikut terhapus.`)) return;
+    // Optimistic: hapus dari state
+    setContacts(prev => prev.filter(c => c.id !== id));
     try {
-      const form = new FormData();
-      form.append('file', file);
-      const res = await fetch('/api/contacts/import', { method: 'POST', body: form });
-      const data = await res.json();
-      if (res.ok) {
-        setImportResult({ inserted: data.inserted, skipped: data.skipped, errors: data.errors || [] });
-        if (data.inserted > 0) router.refresh();
-      } else {
-        alert(`Import gagal: ${data.error}`);
-      }
-    } catch {
-      alert('Terjadi kesalahan saat import.');
-    } finally {
-      setImportLoading(false);
-      if (importInputRef.current) importInputRef.current.value = '';
+      const res = await fetch(`/api/contacts/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed');
+    } catch (error) {
+      console.error(error);
+      alert('Gagal menghapus kontak. Silakan coba lagi.');
+      // Rollback: reload page
+      window.location.reload();
     }
   };
 
@@ -224,37 +209,6 @@ export function LeadsTableClient({
 
   return (
     <div className="flex flex-col h-full bg-slate-50/40 p-4 md:p-6 lg:p-8 space-y-6 overflow-y-auto no-scrollbar">
-      {/* Hidden file input for import */}
-      <input
-        ref={importInputRef}
-        type="file"
-        accept=".xlsx,.xls,.csv"
-        className="hidden"
-        onChange={handleImport}
-      />
-
-      {/* Import result toast */}
-      {importResult && (
-        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 duration-300">
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-xl p-4 max-w-sm w-full">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <div>
-                  <p className="font-bold text-slate-800 text-sm">Import Selesai</p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    ✅ {importResult.inserted} ditambahkan · ⏭️ {importResult.skipped} dilewati
-                    {importResult.errors.length > 0 && ` · ❌ ${importResult.errors.length} error`}
-                  </p>
-                </div>
-              </div>
-              <button onClick={() => setImportResult(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Header & Controls */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-200/60 pb-6">
@@ -308,15 +262,7 @@ export function LeadsTableClient({
             />
           </div>
 
-          {/* Import & Export Buttons */}
-          <button
-            onClick={() => importInputRef.current?.click()}
-            disabled={importLoading}
-            className="flex items-center gap-1.5 px-3 py-2 bg-violet-500 hover:bg-violet-600 text-white rounded-xl text-xs font-bold shadow-sm transition-colors disabled:opacity-60"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            {importLoading ? 'Importing...' : 'Import'}
-          </button>
+          {/* Export Button */}
           <button
             onClick={handleExport}
             disabled={exportLoading}
@@ -479,12 +425,21 @@ export function LeadsTableClient({
                     </select>
                   </td>
                   <td className="py-3.5">
-                    <button 
-                      onClick={() => setSelectedContact(contact)}
-                      className="btn-primary px-4 py-1.5 text-xs font-bold shadow-sm cursor-pointer"
-                    >
-                      Detail
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => setSelectedContact(contact)}
+                        className="btn-primary px-4 py-1.5 text-xs font-bold shadow-sm cursor-pointer"
+                      >
+                        Detail
+                      </button>
+                      <button
+                        onClick={() => handleDelete(contact.id, contact.fullName)}
+                        className="p-1.5 rounded-xl text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                        title="Hapus kontak"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -548,7 +503,14 @@ export function LeadsTableClient({
               </div>
             </div>
 
-            <div className="pt-3 flex justify-end border-t border-slate-100/60">
+            <div className="pt-3 flex justify-between items-center border-t border-slate-100/60">
+              <button
+                onClick={() => handleDelete(contact.id, contact.fullName)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-rose-500 hover:bg-rose-50 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Hapus
+              </button>
               <button 
                 onClick={() => setSelectedContact(contact)}
                 className="btn-primary px-4 py-1.5 text-xs font-bold shadow-sm"

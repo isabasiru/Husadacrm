@@ -287,6 +287,36 @@ export async function GET(request: Request) {
       replyCount: r.replyCount
     }));
 
+    // 7. Message Volume Trends (Inbound vs Outbound messages)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const messageTrendsResult = await prisma.$queryRaw<any[]>`
+      SELECT 
+        DATE(sent_at) AS "date",
+        COUNT(CASE WHEN direction = 'INBOUND' THEN 1 END)::integer AS "inbound",
+        COUNT(CASE WHEN direction = 'OUTBOUND' THEN 1 END)::integer AS "outbound"
+      FROM messages
+      WHERE sent_at >= ${currentStart}
+        AND sent_at <= ${currentEnd}
+      GROUP BY DATE(sent_at)
+      ORDER BY DATE(sent_at) ASC
+    `;
+
+    const messageTrends = messageTrendsResult.map(r => {
+      let dateStr = '';
+      if (r.date instanceof Date) {
+        dateStr = r.date.toISOString().split('T')[0];
+      } else if (typeof r.date === 'string') {
+        dateStr = r.date.split('T')[0];
+      } else {
+        dateStr = String(r.date);
+      }
+      return {
+        date: dateStr,
+        inbound: r.inbound || 0,
+        outbound: r.outbound || 0
+      };
+    });
+
     // Return all aggregated metrics
     return NextResponse.json({
       success: true,
@@ -316,7 +346,8 @@ export async function GET(request: Request) {
       },
       funnel: funnelBreakdown,
       sourceAttribution,
-      agentPerformance
+      agentPerformance,
+      messageTrends
     });
   } catch (error) {
     console.error('Error generating dashboard stats:', error);
